@@ -1,22 +1,28 @@
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import WebSocket from 'ws';
+import fastify from 'fastify';
+import fastifyCors from '@fastify/cors';
 
-const wss = new WebSocket.Server({ port: 8080 });
+const app = fastify();
+const wss = new WebSocket.Server({ noServer: true });
 const port = new SerialPort({
   path: 'COM5',
   baudRate: 9600,
   autoOpen: true
 });
 
+let ldrValue, umidadeValue, temperaturaValue; // Declaração das variáveis globais
+
 const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+app.register(fastifyCors, {
+  origin: 'http://localhost:3000', // Configure a origem permitida (seu frontend)
+});
 
 port.on('open', () => {
   console.log('Serial Port Open');
   parser.on('data', data => {
-    // Depure os dados recebidos
-    //console.log('Dados recebidos:', data);
-
     // Separar as linhas de dados
     const values = data.trim().split(' ');
 
@@ -25,14 +31,12 @@ port.on('open', () => {
       const areAllValuesValid = values.every(value => !isNaN(parseFloat(value)));
 
       if (areAllValuesValid) {
-        const [ldrValue, umidadeValue, temperaturaValue] = values.map(parseFloat);
+        [ldrValue, umidadeValue, temperaturaValue] = values.map(parseFloat); // Atribuição das variáveis globais
 
         // Exibir os valores
         console.log('Valor lido pelo LDR:', ldrValue);
         console.log('Umidade:', umidadeValue, '%');
         console.log('Temperatura:', temperaturaValue, '°C');
-
-        // Agora você pode salvar esses valores em variáveis ou fazer o que desejar com eles.
 
         // Enviar os valores para os clientes WebSocket
         wss.clients.forEach(client => {
@@ -52,3 +56,26 @@ port.on('open', () => {
 wss.on('connection', ws => {
   console.log('WebSocket connection opened');
 });
+
+// Rota para enviar os valores
+app.get('/dados', (request, reply) => {
+  if (port.isOpen) {
+    const dataToSend = {
+      ldrValue,
+      umidadeValue,
+      temperaturaValue
+    };
+
+    reply.send(dataToSend);
+  } else {
+    reply.code(500).send({ error: 'A porta serial não está aberta.' });
+  }
+});
+
+app
+  .listen({
+    port: 3333,
+  })
+  .then(() => {
+    console.log('HTTP Server Running!')
+  })
